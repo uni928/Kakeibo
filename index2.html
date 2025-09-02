@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>家計簿（逐次保存・グラフ対応）</title>
+  <style>
+    :root{
+      --bg:#f6f7fb; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
+      --primary:#2563eb; --ring:#93c5fd; --border:#e5e7eb; --soft:#f1f5f9;
+      --danger:#ef4444; --success:#10b981; --warn:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    .container{max-width:1100px;margin:0 auto;padding:20px}
+
+    .topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin-bottom:12px}
+    .month-label{font-weight:800;font-size:22px;text-align:center;letter-spacing:.02em}
+    .nav{display:flex;gap:8px;align-items:center}
+    .fileio{display:flex;gap:8px;justify-content:flex-end}
+
+    button,.btnlike{appearance:none;border:1px solid var(--border);background:#fff;border-radius:10px;padding:8px 12px;cursor:pointer;font-weight:600}
+    button:hover{border-color:#cbd5e1;background:#fff}
+    button.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    button.ghost{background:transparent}
+    .chip{padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:#fff;cursor:pointer;font-size:12px}
+    .chip:hover{border-color:#cbd5e1}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+
+    .calendar{padding:14px;margin-bottom:20px}
+    .weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+    .weekday{font-weight:700;text-align:center;color:#334155}
+    .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+
+    .cell{position:relative;min-height:88px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px;cursor:pointer}
+    .cell.out{background:var(--soft);color:var(--muted)}
+    .cell .date{font-weight:700;font-size:13px}
+    .cell.today{border-color:var(--primary)}
+    .cell.selected{outline:3px solid var(--ring)}
+    .cell .totals{position:absolute;right:8px;bottom:6px;text-align:right;font-size:11px;line-height:1.1}
+    .cell .totals .neg{color:var(--danger);} .cell .totals .pos{color:var(--success);}
+
+    .summary-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .sumcard{padding:10px;border-left:5px solid transparent}
+    .sumcard.expense{border-left-color:var(--danger)}
+    .sumcard.income{border-left-color:var(--success)}
+    .sumlabel{font-size:12px;color:var(--muted)}
+    .sumvalue{font-weight:800;font-size:18px;margin-top:4px}
+
+    .layout{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin-top:14px}
+    @media (max-width:900px){.layout{grid-template-columns:1fr}}
+
+    .panel{padding:14px}
+    .panel h2{margin:0 0 10px 0;font-size:18px}
+    .form{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end}
+    .form .full{grid-column:1 / -1}
+    label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#334155}
+    input[type="text"],input[type="number"],select{border:1px solid var(--border);border-radius:10px;padding:10px;background:#fff}
+    input[type="number"]{text-align:right}
+
+    .quick{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+
+    .entries{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+    .entry{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;background:#fff}
+    .entry .name{font-weight:700}
+    .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
+    .badge.out{color:var(--danger);border-color:#fecaca}
+    .badge.in{color:var(--success);border-color:#bbf7d0}
+
+    .daytot{display:flex;gap:10px;color:#334155;font-size:13px;margin-top:6px}
+
+    .mutetext{color:var(--muted);font-size:12px}
+
+    .fileio input[type="file"]{display:none}
+    .filelabel{border:1px dashed var(--border);padding:8px 12px;border-radius:10px;cursor:pointer}
+
+    .note{font-size:12px;color:#475569;line-height:1.6}
+
+    /* グラフ領域 */
+    .chart-container{margin-top:20px;padding:14px; overflow:hidden}
+    .chart-box{ position:relative; width:100%; height:320px; max-height:60vh; overflow:hidden }
+    .chart-box canvas{ position:absolute; inset:0; width:100% !important; height:100% !important; display:block }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="nav">
+        <button id="btnPrevMonth">◀ 前の月</button>
+        <button id="btnToday" class="ghost">今日</button>
+        <button id="btnNextMonth">次の月 ▶</button>
+      </div>
+      <div class="month-label" id="monthLabel">2025年 9月</div>
+      <div class="fileio">
+        <button id="saveBtn" title="JSONとして書き出し">書き出し</button>
+        <label class="filelabel" title="JSONから読み込み">読み込み<input id="loadInput" type="file" accept="application/json" /></label>
+      </div>
+    </div>
+
+    <!-- カレンダーエリア -->
+    <div class="calendar card" id="calendarArea">
+      <div class="weekdays">
+        <div class="weekday" title="Sunday">日</div>
+        <div class="weekday" title="Monday">月</div>
+        <div class="weekday" title="Tuesday">火</div>
+        <div class="weekday" title="Wednesday">水</div>
+        <div class="weekday" title="Thursday">木</div>
+        <div class="weekday" title="Friday">金</div>
+        <div class="weekday" title="Saturday">土</div>
+      </div>
+      <div class="grid" id="calendarGrid"></div>
+      <div class="summary-row">
+        <div class="card sumcard expense">
+          <div class="sumlabel">月の出費</div>
+          <div class="sumvalue" id="monthExpense">¥0</div>
+        </div>
+        <div class="card sumcard income">
+          <div class="sumlabel">月の収入</div>
+          <div class="sumvalue" id="monthIncome">¥0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="panel card">
+        <h2 id="selectedTitle">選択日: -</h2>
+
+        <div class="daytot">
+          <div>出費: <strong id="dayExpense">¥0</strong></div>
+          <div>収入: <strong id="dayIncome">¥0</strong></div>
+        </div>
+
+        <div class="mutetext" style="margin-top:4px">名称はボタンからワンタップ入力できます</div>
+        <div class="quick" id="quickNames"></div>
+
+        <div class="form">
+          <label>
+            種類
+            <select id="type">
+              <option value="expense">支出</option>
+              <option value="income">収入</option>
+            </select>
+          </label>
+          <label>
+            金額（円）
+            <input id="amount" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+          </label>
+          <label class="full">
+            名称
+            <input id="name" type="text" placeholder="例: 食費 / 家賃 / 給料 など" />
+          </label>
+          <div class="full" style="display:flex;gap:8px">
+            <button id="addBtn" class="primary">追加</button>
+            <button id="clearForm" type="button">クリア</button>
+          </div>
+        </div>
+
+        <div class="entries" id="entriesList"></div>
+      </div>
+
+      <div class="panel card">
+        <h2>メモ & 使い方</h2>
+        <p class="note">
+          ・起動時は当月が表示されます。<br>
+          ・日付をクリックすると、その枠が<strong>四角で囲まれ</strong>、下の欄で編集できます。<br>
+          ・名称はボタン（食費/交通/家賃…）で自動入力できます。<br>
+          ・書き出しはJSONファイルで行います（逐次保存は自動）。<br>
+          ・各日セルの右下に「-出費 / +収入」の合計が表示されます。<br>
+          ・月の「出費」「収入」はカレンダーの最後に表示されます。<br>
+          ・下部に日別バーグラフと名称別ドーナツグラフを表示します。
+        </p>
+      </div>
+    </div>
+
+    <!-- グラフ表示 -->
+    <div class="chart-container card">
+      <h2>月次グラフ</h2>
+      <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+      <div class="chart-box" style="margin-top:20px"><canvas id="nameChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // ====== Utility ======
+    const fmtJPY = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
+    const today = new Date();
+    function ymdStr(y, m, d){ return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+    function parseYmd(s){ const [y,mm,d]=s.split('-').map(Number); return new Date(y, mm-1, d); }
+    function daysInMonth(y, m){ return new Date(y, m+1, 0).getDate(); }
+
+    // ====== State ======
+    const state = {
+      year: today.getFullYear(),
+      month: today.getMonth(), // 0-indexed
+      selected: null, // 'YYYY-MM-DD'
+      ledger: {}, // { 'YYYY-MM-DD': [ {id, type:'expense'|'income', name, amount, ts} ] }
+    };
+
+    const DEFAULT_QUICK = [
+      '食費','カフェ','コンビニ','交通','日用品','家賃','光熱費','水道','通信','サブスク','娯楽','医療','交際','教育','雑費','給料','ボーナス','臨時収入'
+    ];
+
+    // ====== Auto Save / Load (localStorage) ======
+    const STORAGE_KEY = 'kakeibo_autosave_v1';
+    let _saveTimer = null;
+function persist(){
+  const payload = {
+    version: 2,
+    savedAt: new Date().toISOString(),
+    ledger: state.ledger, // ← 登録された明細をすべて保存
+    ui: { year: state.year, month: state.month, selected: state.selected }
+  };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch(e) {
+    console.warn('localStorage save error', e);
+  }
+}
+    function scheduleSave(){ clearTimeout(_saveTimer); _saveTimer = setTimeout(persist, 50); }
+
+(function bootLoad(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return;
+
+    const obj = JSON.parse(raw);
+    if(obj && typeof obj === 'object') {
+      // 逐次保存版の形 { ledger, ui } と、旧版（ledger 直保存）の両対応
+      if(obj.ledger) {
+        state.ledger = obj.ledger;          // ← 全明細を復元
+      } else {
+        state.ledger = obj;                 // ← 旧版：ledgerを直保存していたケース
+      }
+      // UI 状態（年/月/選択日）があれば反映
+      if(obj.ui) {
+        if(Number.isInteger(obj.ui.year))  state.year  = obj.ui.year;
+        if(Number.isInteger(obj.ui.month)) state.month = obj.ui.month;
+        if(typeof obj.ui.selected === 'string') state.selected = obj.ui.selected;
+      }
+    }
+  } catch(e) {
+    console.warn('localStorage load error', e);
+  }
+})();
+
+    // ====== Elements ======
+    const monthLabel = document.getElementById('monthLabel');
+    const grid = document.getElementById('calendarGrid');
+    const monthExpenseEl = document.getElementById('monthExpense');
+    const monthIncomeEl = document.getElementById('monthIncome');
+
+    const selectedTitle = document.getElementById('selectedTitle');
+    const entriesList = document.getElementById('entriesList');
+    const typeSel = document.getElementById('type');
+    const amountInp = document.getElementById('amount');
+    const nameInp = document.getElementById('name');
+    const addBtn = document.getElementById('addBtn');
+    const clearFormBtn = document.getElementById('clearForm');
+    const dayExpenseEl = document.getElementById('dayExpense');
+    const dayIncomeEl = document.getElementById('dayIncome');
+
+    const quickNamesWrap = document.getElementById('quickNames');
+
+    const btnPrevMonth = document.getElementById('btnPrevMonth');
+    const btnNextMonth = document.getElementById('btnNextMonth');
+    const btnToday = document.getElementById('btnToday');
+
+    const saveBtn = document.getElementById('saveBtn');
+    const loadInput = document.getElementById('loadInput');
+
+    // Charts
+    const dailyChartCanvas = document.getElementById('dailyChart');
+    const nameChartCanvas = document.getElementById('nameChart');
+    let dailyChart, nameChart;
+
+    // ====== Quick names ======
+    function renderQuickNames(){
+      quickNamesWrap.innerHTML = '';
+      DEFAULT_QUICK.forEach(q => {
+        const btn = document.createElement('button');
+        btn.className = 'chip';
+        btn.type = 'button';
+        btn.textContent = q;
+        btn.addEventListener('click', () => { nameInp.value = q; nameInp.focus(); });
+        quickNamesWrap.appendChild(btn);
+      });
+    }
+
+    // ====== Calendar ======
+    function renderMonth(){
+      const y = state.year, m = state.month;
+      monthLabel.textContent = `${y}年 ${m+1}月`;
+
+      grid.innerHTML = '';
+
+      const firstDow = new Date(y, m, 1).getDay(); // 0=Sun
+      const thisDays = daysInMonth(y, m);
+      const prevDays = daysInMonth(y, m-1);
+
+      // 6 weeks x 7 days = 42 cells
+      let startDayPrev = prevDays - firstDow + 1; 
+
+      const cells = [];
+      for(let i=0;i<42;i++){
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        let d, cm=true, cy=y, cmnth=m;
+        if(i < firstDow){
+          d = startDayPrev + i; cm=false; cmnth = m-1; if(cmnth<0){ cmnth=11; cy=y-1; }
+          cell.classList.add('out');
+        }else if(i >= firstDow + thisDays){
+          d = i - (firstDow + thisDays) + 1; cm=false; cmnth = m+1; if(cmnth>11){ cmnth=0; cy=y+1; }
+          cell.classList.add('out');
+        }else{ d = i - firstDow + 1; }
+
+        const dstr = ymdStr(cy, cmnth, d);
+        cell.dataset.date = dstr;
+
+        const dateEl = document.createElement('div');
+        dateEl.className = 'date';
+        dateEl.textContent = String(d);
+        cell.appendChild(dateEl);
+
+        const t = new Date();
+        const tstr = ymdStr(t.getFullYear(), t.getMonth(), t.getDate());
+        if(dstr === tstr) cell.classList.add('today');
+        if(state.selected === dstr) cell.classList.add('selected');
+
+        const { dayExp, dayInc } = calcDayTotals(dstr);
+        const totals = document.createElement('div');
+        totals.className = 'totals';
+        const neg = document.createElement('div'); neg.className = 'neg'; neg.textContent = dayExp ? `- ${fmtJPY.format(dayExp)}` : '';
+        const pos = document.createElement('div'); pos.className = 'pos'; pos.textContent = dayInc ? `+ ${fmtJPY.format(dayInc)}` : '';
+        totals.appendChild(neg); totals.appendChild(pos);
+        cell.appendChild(totals);
+
+        cell.addEventListener('click', () => {
+          if(!cm){ state.year = cy; state.month = cmnth; }
+          state.selected = dstr;
+          scheduleSave();
+          renderAll();
+          document.getElementById('selectedTitle').scrollIntoView({behavior:'smooth', block:'start'});
+        });
+
+        cells.push(cell);
+      }
+
+      cells.forEach(c => grid.appendChild(c));
+
+      const { monthExp, monthInc } = calcMonthTotals(y, m);
+      monthExpenseEl.textContent = `- ${fmtJPY.format(monthExp)}`;
+      monthIncomeEl.textContent = `+ ${fmtJPY.format(monthInc)}`;
+
+      // UI状態もセーブ（当月や選択日の変更）
+      scheduleSave();
+    }
+
+    function ensureSelected(){
+      const y = state.year, m = state.month;
+      if(!state.selected){
+        const t = new Date();
+        if(t.getFullYear()===y && t.getMonth()===m){ state.selected = ymdStr(y,m,t.getDate()); }
+        else { state.selected = ymdStr(y,m,1); }
+      }else{
+        const d = parseYmd(state.selected);
+        if(d.getFullYear()!==y || d.getMonth()!==m){
+          const day = Math.min(d.getDate(), daysInMonth(y,m));
+          state.selected = ymdStr(y,m,day);
+        }
+      }
+    }
+
+    // ====== Totals ======
+    function calcDayTotals(dstr){
+      const list = state.ledger[dstr] || [];
+      let dayExp=0, dayInc=0;
+      for(const it of list){
+        if(it.type==='expense') dayExp += Math.abs(Number(it.amount)||0);
+        else dayInc += Math.abs(Number(it.amount)||0);
+      }
+      return { dayExp, dayInc };
+    }
+
+    function calcMonthTotals(y,m){
+      const prefix = `${y}-${String(m+1).padStart(2,'0')}-`;
+      let monthExp=0, monthInc=0;
+      for(const k in state.ledger){
+        if(k.startsWith(prefix)){
+          const { dayExp, dayInc } = calcDayTotals(k);
+          monthExp += dayExp; monthInc += dayInc;
+        }
+      }
+      return { monthExp, monthInc };
+    }
+
+    // ====== Detail panel ======
+    let editing = null; // { date, id }
+    function renderDetail(){
+      ensureSelected();
+      const d = parseYmd(state.selected);
+      selectedTitle.textContent = `選択日: ${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+
+      const list = (state.ledger[state.selected] || []).slice().sort((a,b)=>a.ts-b.ts);
+      const { dayExp, dayInc } = calcDayTotals(state.selected);
+      dayExpenseEl.textContent = `- ${fmtJPY.format(dayExp)}`;
+      dayIncomeEl.textContent = `+ ${fmtJPY.format(dayInc)}`;
+
+      entriesList.innerHTML = '';
+      if(list.length===0){
+        const empty = document.createElement('div');
+        empty.className = 'mutetext';
+        empty.textContent = 'この日に登録された明細はありません。';
+        entriesList.appendChild(empty);
+        return;
+      }
+
+      list.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'entry';
+
+        const left = document.createElement('div');
+        const name = document.createElement('div'); name.className='name'; name.textContent = item.name || '(無題)';
+        const sub = document.createElement('div'); sub.className='mutetext';
+        const dt = new Date(item.ts);
+        sub.textContent = `${dt.getHours().toString().padStart(2,'0')}:${dt.getMinutes().toString().padStart(2,'0')}・${item.type==='expense'?'支出':'収入'}`;
+        left.appendChild(name); left.appendChild(sub);
+
+        const amt = document.createElement('div');
+        amt.style.fontWeight='800';
+        amt.textContent = `${item.type==='expense'?'-':'+'} ${fmtJPY.format(Math.abs(item.amount||0))}`;
+
+        const actions = document.createElement('div'); actions.style.display='flex'; actions.style.gap='6px';
+        const badge = document.createElement('span'); badge.className = `badge ${item.type==='expense'?'out':'in'}`; badge.textContent = item.type==='expense'?'支出':'収入';
+        const editBtn = document.createElement('button'); editBtn.textContent='編集'; editBtn.className='ghost';
+        const delBtn = document.createElement('button'); delBtn.textContent='削除';
+        actions.appendChild(badge); actions.appendChild(editBtn); actions.appendChild(delBtn);
+
+        editBtn.addEventListener('click', ()=>{
+          editing = { date: state.selected, id: item.id };
+          typeSel.value = item.type; amountInp.value = Math.abs(item.amount||0); nameInp.value = item.name||'';
+          addBtn.textContent = '更新'; addBtn.classList.add('primary');
+          nameInp.focus();
+        });
+        delBtn.addEventListener('click', ()=>{
+          if(confirm('この明細を削除しますか？')){
+            const arr = state.ledger[state.selected] || [];
+            const idx = arr.findIndex(it => it.id===item.id);
+            if(idx>-1){ arr.splice(idx,1); if(arr.length===0) delete state.ledger[state.selected]; scheduleSave(); renderAll(); }
+          }
+        });
+
+        row.appendChild(left); row.appendChild(amt); row.appendChild(actions);
+        entriesList.appendChild(row);
+      });
+    }
+
+    function clearForm(){ editing=null; typeSel.value='expense'; amountInp.value=''; nameInp.value=''; addBtn.textContent='追加'; }
+
+    function addOrUpdate(){
+      ensureSelected();
+      const type = typeSel.value;
+      const amount = Math.max(0, Math.floor(Number(amountInp.value || 0)));
+      const name = (nameInp.value||'').trim();
+      if(!amount){ alert('金額を入力してください'); amountInp.focus(); return; }
+
+      const arr = state.ledger[state.selected] || (state.ledger[state.selected] = []);
+      if(editing){
+        const idx = arr.findIndex(it => it.id===editing.id);
+        if(idx>-1){ arr[idx] = { ...arr[idx], type, amount, name } }
+        editing=null; addBtn.textContent='追加';
+      }else{
+        arr.push({ id: crypto.randomUUID?.() || String(Date.now()+Math.random()), type, amount, name, ts: Date.now() });
+      }
+      scheduleSave();
+      clearForm();
+      renderAll();
+    }
+
+    // ====== Save / Load (export/import) ======
+    function downloadFile(){
+      const payload = { version:2, exportedAt: new Date().toISOString(), ledger: state.ledger, ui:{year:state.year, month:state.month, selected:state.selected} };
+      const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
+      const y = state.year, m = state.month+1;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `kakeibo_${y}-${String(m).padStart(2,'0')}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    }
+
+    function loadFromFile(file){
+      const reader = new FileReader();
+      reader.onload = (e)=>{
+        try{
+          const obj = JSON.parse(String(e.target.result||'{}'));
+          if(!obj.ledger || typeof obj.ledger !== 'object') throw new Error('Invalid file');
+          state.ledger = obj.ledger;
+          if(obj.ui){ state.year=obj.ui.year??state.year; state.month=obj.ui.month??state.month; state.selected=obj.ui.selected??state.selected; }
+          scheduleSave();
+          renderAll();
+          alert('読み込みが完了しました');
+        }catch(err){ alert('読み込みに失敗しました: '+ err.message); }
+      };
+      reader.readAsText(file);
+    }
+
+    // ====== Charts ======
+    function getMonthSeries(y,m,type){
+      const days = daysInMonth(y,m);
+      const arr = new Array(days).fill(0);
+      const prefix = `${y}-${String(m+1).padStart(2,'0')}-`;
+      for(const k in state.ledger){
+        if(k.startsWith(prefix)){
+          const day = Number(k.slice(-2));
+          const list = state.ledger[k]||[];
+          for(const it of list){ if(it.type===type){ arr[day-1] += Math.abs(Number(it.amount)||0); } }
+        }
+      }
+      return arr;
+    }
+    function getNameBreakdown(y,m,type){
+      const map = new Map();
+      const prefix = `${y}-${String(m+1).padStart(2,'0')}-`;
+      for(const k in state.ledger){
+        if(k.startsWith(prefix)){
+          const list = state.ledger[k]||[];
+          for(const it of list){ if(it.type===type){ const key=(it.name||'無題').trim()||'無題'; map.set(key,(map.get(key)||0)+Math.abs(Number(it.amount)||0)); } }
+        }
+      }
+      const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]);
+      const top = pairs.slice(0,8);
+      const other = pairs.slice(8).reduce((s,[_k,v])=>s+v,0);
+      if(other>0) top.push(['その他', other]);
+      return top;
+    }
+
+    function renderCharts(){
+      const y = state.year, m = state.month;
+
+      const labels = Array.from({length: daysInMonth(y,m)}, (_,i)=> `${i+1}`);
+      const exp = getMonthSeries(y,m,'expense');
+      const inc = getMonthSeries(y,m,'income');
+
+      if(dailyChart){ dailyChart.destroy(); }
+      dailyChart = new Chart(dailyChartCanvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels, datasets: [ { label: '支出', data: exp, backgroundColor: '#f43f5e' }, { label: '収入', data: inc, backgroundColor: '#10b981' } ] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'top'}, title:{display:true, text:`${y}年${m+1}月 日別合計`} }, scales:{ x:{stacked:true}, y:{stacked:true, ticks:{ callback:v=> v.toLocaleString('ja-JP') } } } }
+      });
+
+      const pairs = getNameBreakdown(y,m,'expense');
+      const nLabels = pairs.map(p=>p[0]);
+      const nVals = pairs.map(p=>p[1]);
+      const legendPos = nameChartCanvas.clientWidth < 560 ? 'bottom' : 'right';
+      const palette = ['#60a5fa','#34d399','#f97316','#f43f5e','#a78bfa','#f59e0b','#22c55e','#38bdf8','#e879f9'];
+      if(nameChart){ nameChart.destroy(); }
+      nameChart = new Chart(nameChartCanvas.getContext('2d'), {
+        type: 'doughnut',
+        data: { labels: nLabels, datasets: [{ data: nVals, backgroundColor: nLabels.map((_,i)=>palette[i%palette.length]) }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:legendPos}, title:{display:true, text:`${y}年${m+1}月 名称別（支出）`} } }
+      });
+    }
+
+    // ====== Wiring ======
+    btnPrevMonth.addEventListener('click', ()=>{ if(state.month===0){ state.month=11; state.year--; } else state.month--; scheduleSave(); renderAll(); });
+    btnNextMonth.addEventListener('click', ()=>{ if(state.month===11){ state.month=0; state.year++; } else state.month++; scheduleSave(); renderAll(); });
+    btnToday.addEventListener('click', ()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth(); state.selected=ymdStr(state.year,state.month,t.getDate()); scheduleSave(); renderAll(); });
+
+    addBtn.addEventListener('click', (e)=>{ e.preventDefault(); addOrUpdate(); });
+    clearFormBtn.addEventListener('click', (e)=>{ e.preventDefault(); clearForm(); });
+
+    saveBtn.addEventListener('click', downloadFile);
+    loadInput.addEventListener('change', (e)=>{ const f=e.target.files?.[0]; if(f) loadFromFile(f); e.target.value=''; });
+
+    // ====== Init ======
+    function renderAll(){ ensureSelected(); renderMonth(); renderDetail(); renderCharts(); }
+    renderQuickNames();
+    renderAll();
+  </script>
+</body>
+</html>
