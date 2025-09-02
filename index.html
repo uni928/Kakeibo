@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>家計簿</title>
+  <title>家計簿（グラフ対応・完全版）</title>
   <style>
     :root{
       --bg:#f6f7fb; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
@@ -28,7 +28,7 @@
 
     .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
 
-    .calendar{padding:14px}
+    .calendar{padding:14px;margin-bottom:20px}
     .weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
     .weekday{font-weight:700;text-align:center;color:#334155}
     .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
@@ -77,15 +77,38 @@
     .filelabel{border:1px dashed var(--border);padding:8px 12px;border-radius:10px;cursor:pointer}
 
     .note{font-size:12px;color:#475569;line-height:1.6}
+
+    /* グラフ領域 */
+    /* グラフ領域 */
+.chart-container{margin-top:20px;padding:14px; overflow:hidden}
+
+/* 各チャートの“枠”を用意して高さ管理 */
+.chart-box{
+  position: relative;
+  width: 100%;
+  height: 320px;      /* 好みで 280～360px 程度に調整可 */
+  max-height: 60vh;   /* 画面が低い場合の上限保護 */
+  overflow: hidden;   /* はみ出し抑止 */
+}
+
+/* キャンバスは枠いっぱいにフィット */
+.chart-box canvas{
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;     /* 余計な隙間対策 */
+}
+
   </style>
 </head>
 <body>
   <div class="container">
     <div class="topbar">
       <div class="nav">
-        <button id="prevMonth">◀ 前の月</button>
-        <button id="todayBtn" class="ghost">今日</button>
-        <button id="nextMonth">次の月 ▶</button>
+        <button id="btnPrevMonth">◀ 前の月</button>
+        <button id="btnToday" class="ghost">今日</button>
+        <button id="btnNextMonth">次の月 ▶</button>
       </div>
       <div class="month-label" id="monthLabel">2025年 9月</div>
       <div class="fileio">
@@ -94,7 +117,8 @@
       </div>
     </div>
 
-    <div class="calendar card">
+    <!-- カレンダーエリア -->
+    <div class="calendar card" id="calendarArea">
       <div class="weekdays">
         <div class="weekday" title="Sunday">日</div>
         <div class="weekday" title="Monday">月</div>
@@ -162,11 +186,27 @@
           ・名称はボタン（食費/交通/家賃…）で自動入力できます。<br>
           ・保存はJSONファイルで行います。読み込みで続きから編集できます。<br>
           ・各日セルの右下に「-出費 / +収入」の合計が表示されます。<br>
-          ・月の「出費」「収入」はカレンダーの最後に表示されます。
+          ・月の「出費」「収入」はカレンダーの最後に表示されます。<br>
+          ・下部に日別バーグラフと名称別ドーナツグラフを表示します。
         </p>
       </div>
     </div>
+
+    <!-- グラフ表示 -->
+    <div class="chart-container card">
+  <h2>月次グラフ</h2>
+  <div class="chart-box">
+    <canvas id="dailyChart"></canvas>
   </div>
+  <div class="chart-box" style="margin-top:20px">
+    <canvas id="nameChart"></canvas>
+  </div>
+</div>
+
+  </div>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
     // ====== Utility ======
@@ -188,11 +228,8 @@
       '食費','カフェ','コンビニ','交通','日用品','家賃','光熱費','水道','通信','サブスク','娯楽','医療','交際','教育','雑費','給料','ボーナス','臨時収入'
     ];
 
-    // try load from localStorage (optional convenience)
-    try{
-      const saved = localStorage.getItem('kakeibo_ledger_v1');
-      if(saved){ state.ledger = JSON.parse(saved); }
-    }catch(e){ console.warn('localStorage load error', e); }
+    // try load from localStorage
+    try{ const saved = localStorage.getItem('kakeibo_ledger_v1'); if(saved){ state.ledger = JSON.parse(saved); } }catch(e){ console.warn('localStorage load error', e); }
 
     // ====== Elements ======
     const monthLabel = document.getElementById('monthLabel');
@@ -212,12 +249,17 @@
 
     const quickNamesWrap = document.getElementById('quickNames');
 
-    const prevBtn = document.getElementById('prevMonth');
-    const nextBtn = document.getElementById('nextMonth');
-    const todayBtn = document.getElementById('todayBtn');
+    const btnPrevMonth = document.getElementById('btnPrevMonth');
+    const btnNextMonth = document.getElementById('btnNextMonth');
+    const btnToday = document.getElementById('btnToday');
 
     const saveBtn = document.getElementById('saveBtn');
     const loadInput = document.getElementById('loadInput');
+
+    // Charts
+    const dailyChartCanvas = document.getElementById('dailyChart');
+    const nameChartCanvas = document.getElementById('nameChart');
+    let dailyChart, nameChart;
 
     // ====== Quick names ======
     function renderQuickNames(){
@@ -278,7 +320,7 @@
         if(dstr === tstr) cell.classList.add('today');
         if(state.selected === dstr) cell.classList.add('selected');
 
-        // per-day totals (for that exact date)
+        // per-day totals
         const { dayExp, dayInc } = calcDayTotals(dstr);
         const totals = document.createElement('div');
         totals.className = 'totals';
@@ -289,12 +331,11 @@
 
         // click behavior
         cell.addEventListener('click', () => {
-          if(!cm){ // if clicked outside current month, jump to that month
+          if(!cm){ // clicked outside current month -> jump
             state.year = cy; state.month = cmnth;
           }
           state.selected = dstr;
           renderAll();
-          // Scroll detail into view on mobile
           document.getElementById('selectedTitle').scrollIntoView({behavior:'smooth', block:'start'});
         });
 
@@ -312,12 +353,10 @@
     function ensureSelected(){
       const y = state.year, m = state.month;
       if(!state.selected){
-        // default: today if in current month, else 1st day of month
         const t = new Date();
         if(t.getFullYear()===y && t.getMonth()===m){ state.selected = ymdStr(y,m,t.getDate()); }
         else { state.selected = ymdStr(y,m,1); }
       }else{
-        // keep selection if same month, else clamp to first day in current month with same day if possible
         const d = parseYmd(state.selected);
         if(d.getFullYear()!==y || d.getMonth()!==m){
           const day = Math.min(d.getDate(), daysInMonth(y,m));
@@ -454,7 +493,6 @@
           if(!obj.ledger || typeof obj.ledger !== 'object') throw new Error('Invalid file');
           state.ledger = obj.ledger;
           saveLocal();
-          // try to select the first date in the file if current month has no data
           state.selected = null;
           renderAll();
           alert('読み込みが完了しました');
@@ -463,10 +501,86 @@
       reader.readAsText(file);
     }
 
+    // ====== Charts ======
+    function getMonthSeries(y,m,type){
+      const days = daysInMonth(y,m);
+      const arr = new Array(days).fill(0);
+      const prefix = `${y}-${String(m+1).padStart(2,'0')}-`;
+      for(const k in state.ledger){
+        if(k.startsWith(prefix)){
+          const day = Number(k.slice(-2));
+          const list = state.ledger[k]||[];
+          for(const it of list){ if(it.type===type){ arr[day-1] += Math.abs(Number(it.amount)||0); } }
+        }
+      }
+      return arr;
+    }
+    function getNameBreakdown(y,m,type){
+      const map = new Map();
+      const prefix = `${y}-${String(m+1).padStart(2,'0')}-`;
+      for(const k in state.ledger){
+        if(k.startsWith(prefix)){
+          const list = state.ledger[k]||[];
+          for(const it of list){ if(it.type===type){ const key=(it.name||'無題').trim()||'無題'; map.set(key,(map.get(key)||0)+Math.abs(Number(it.amount)||0)); } }
+        }
+      }
+      const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]);
+      const top = pairs.slice(0,8);
+      const other = pairs.slice(8).reduce((s,[_k,v])=>s+v,0);
+      if(other>0) top.push(['その他', other]);
+      return top;
+    }
+
+    function renderCharts(){
+      const y = state.year, m = state.month;
+
+      // Daily chart (bar: expense vs income stacked)
+      const labels = Array.from({length: daysInMonth(y,m)}, (_,i)=> `${i+1}`);
+      const exp = getMonthSeries(y,m,'expense');
+      const inc = getMonthSeries(y,m,'income');
+
+      if(dailyChart){ dailyChart.destroy(); }
+      dailyChart = new Chart(dailyChartCanvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: '支出', data: exp, backgroundColor: '#f43f5e' },
+            { label: '収入', data: inc, backgroundColor: '#10b981' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'top' }, title: { display: true, text: `${y}年${m+1}月 日別合計` } },
+          scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v=> v.toLocaleString('ja-JP') } } }
+        }
+      });
+
+      // Name breakdown (donut for expenses)
+      const pairs = getNameBreakdown(y,m,'expense');
+      const nLabels = pairs.map(p=>p[0]);
+      const nVals = pairs.map(p=>p[1]);
+      const palette = ['#60a5fa','#34d399','#f97316','#f43f5e','#a78bfa','#f59e0b','#22c55e','#38bdf8','#e879f9'];
+      if(nameChart){ nameChart.destroy(); }
+      nameChart = new Chart(nameChartCanvas.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: nLabels,
+          datasets: [{ data: nVals, backgroundColor: nLabels.map((_,i)=>palette[i%palette.length]) }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'right' }, title: { display: true, text: `${y}年${m+1}月 名称別（支出）` } }
+        }
+      });
+    }
+
     // ====== Wiring ======
-    prevBtn.addEventListener('click', ()=>{ if(state.month===0){ state.month=11; state.year--; } else state.month--; renderAll(); });
-    nextBtn.addEventListener('click', ()=>{ if(state.month===11){ state.month=0; state.year++; } else state.month++; renderAll(); });
-    todayBtn.addEventListener('click', ()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth(); state.selected=ymdStr(state.year,state.month,t.getDate()); renderAll(); });
+    btnPrevMonth.addEventListener('click', ()=>{ if(state.month===0){ state.month=11; state.year--; } else state.month--; renderAll(); });
+    btnNextMonth.addEventListener('click', ()=>{ if(state.month===11){ state.month=0; state.year++; } else state.month++; renderAll(); });
+    btnToday.addEventListener('click', ()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth(); state.selected=ymdStr(state.year,state.month,t.getDate()); renderAll(); });
 
     addBtn.addEventListener('click', (e)=>{ e.preventDefault(); addOrUpdate(); });
     clearFormBtn.addEventListener('click', (e)=>{ e.preventDefault(); clearForm(); });
@@ -475,7 +589,7 @@
     loadInput.addEventListener('change', (e)=>{ const f=e.target.files?.[0]; if(f) loadFromFile(f); e.target.value=''; });
 
     // ====== Init ======
-    function renderAll(){ ensureSelected(); renderMonth(); renderDetail(); }
+    function renderAll(){ ensureSelected(); renderMonth(); renderDetail(); renderCharts(); }
     renderQuickNames();
     renderAll();
   </script>
