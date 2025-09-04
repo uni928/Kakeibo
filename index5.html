@@ -508,7 +508,37 @@
     }
 
     // ====== Wiring ======
-    document.getElementById('btnPrevMonth').addEventListener('click', ()=>{ const {start}=getSalaryPeriod(state.year,state.month); const prev=new Date(start); prev.setDate(prev.getDate()-1); state.year=prev.getFullYear(); state.month=prev.getMonth(); state.selected=ymdStr(prev.getFullYear(),prev.getMonth(),prev.getDate()); scheduleSave(); renderAll(); });
+        function renderSalaryDaySetting(){
+      const wrap = document.getElementById('salarySetting'); if(!wrap) return; wrap.innerHTML='';
+      const h = document.createElement('h2'); h.textContent='給料日設定';
+      const line = document.createElement('div'); line.style.display='flex'; line.style.gap='8px'; line.style.alignItems='center';
+      const label = document.createElement('label'); label.textContent='給料日 (1〜28)：';
+      const input = document.createElement('input'); input.type='number'; input.min=1; input.max=28; input.value=state.salaryDay||1;
+      input.addEventListener('change', ()=>{ state.salaryDay=Math.min(28, Math.max(1, parseInt(input.value)||1)); scheduleSave(); renderAll(); });
+      line.appendChild(label); line.appendChild(input);
+      const note = document.createElement('div'); note.className='mutetext'; note.textContent='※ 給料日から次の給料日の前日までを1期間として表示・集計します。';
+      wrap.appendChild(h); wrap.appendChild(line); wrap.appendChild(note);
+    }
+
+    // ====== Wiring ======
+    document.getElementById('btnPrevMonth').addEventListener('click', ()=>{
+  // 現在表示している期間の開始日を取得
+  const {start} = getSalaryPeriod(state.year,state.month - 1);
+
+  // その開始日の1日前を prev として、その日が含まれる期間を再計算
+  const prev = new Date(start);
+  prev.setDate(prev.getDate()-1);
+
+  const { start: pStart } = getSalaryPeriod(prev.getFullYear(), prev.getMonth());
+
+  // state をその期間に更新
+  state.year = pStart.getFullYear();
+  state.month = pStart.getMonth();
+  state.selected = ymdStr(prev.getFullYear(), prev.getMonth(), prev.getDate());
+
+  scheduleSave();
+  renderAll();
+});
     document.getElementById('btnNextMonth').addEventListener('click', ()=>{ const {end}=getSalaryPeriod(state.year,state.month); const nxt=new Date(end); nxt.setDate(nxt.getDate()+1); state.year=nxt.getFullYear(); state.month=nxt.getMonth(); state.selected=ymdStr(nxt.getFullYear(),nxt.getMonth(),nxt.getDate()); scheduleSave(); renderAll(); });
     document.getElementById('btnToday').addEventListener('click', ()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth(); state.selected=ymdStr(t.getFullYear(),t.getMonth(),t.getDate()); scheduleSave(); renderAll(); });
 
@@ -530,3 +560,4 @@
   </script>
 </body>
 </html>
+
