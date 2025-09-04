@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>家計簿（給料日ベース版・逐次保存＋グラフ｜IndexedDB暗号化・固定鍵）</title>
+  <style>
+    :root{
+      --bg:#f6f7fb; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
+      --primary:#2563eb; --ring:#93c5fd; --border:#e5e7eb; --soft:#f1f5f9;
+      --danger:#ef4444; --success:#10b981; --warn:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    .container{max-width:1100px;margin:0 auto;padding:20px}
+
+    .topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin-bottom:12px}
+    .month-label{font-weight:800;font-size:22px;text-align:center;letter-spacing:.02em}
+    .nav{display:flex;gap:8px;align-items:center}
+    .fileio{display:flex;gap:8px;justify-content:flex-end}
+
+    button,.btnlike{appearance:none;border:1px solid var(--border);background:#fff;border-radius:10px;padding:8px 12px;cursor:pointer;font-weight:600}
+    button:hover{border-color:#cbd5e1;background:#fff}
+    button.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    button.ghost{background:transparent}
+    .chip{padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:#fff;cursor:pointer;font-size:12px}
+    .chip:hover{border-color:#cbd5e1}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+
+    .calendar{padding:14px;margin-bottom:20px}
+    .weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+    .weekday{font-weight:700;text-align:center;color:#334155}
+    .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+
+    .cell{position:relative;min-height:88px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px;cursor:pointer}
+    .cell.out{background:var(--soft);color:var(--muted)}
+    .cell .date{font-weight:700;font-size:13px}
+    .cell.today{border-color:var(--primary)}
+    .cell.selected{outline:3px solid var(--ring)}
+    .cell .totals{position:absolute;right:8px;bottom:6px;text-align:right;font-size:11px;line-height:1.1}
+    .cell .totals .neg{color:var(--danger);} .cell .totals .pos{color:var(--success);}
+
+    .summary-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .sumcard{padding:10px;border-left:5px solid transparent}
+    .sumcard.expense{border-left-color:var(--danger)}
+    .sumcard.income{border-left-color:var(--success)}
+    .sumlabel{font-size:12px;color:#64748b}
+    .sumvalue{font-weight:800;font-size:18px;margin-top:4px}
+
+    .layout{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin-top:14px}
+    @media (max-width:900px){.layout{grid-template-columns:1fr}}
+
+    .panel{padding:14px}
+    .panel h2{margin:0 0 10px 0;font-size:18px}
+    .form{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end}
+    .form .full{grid-column:1 / -1}
+    label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#334155}
+    input[type="text"],input[type="number"],select{border:1px solid var(--border);border-radius:10px;padding:10px;background:#fff}
+    input[type="number"]{text-align:right}
+
+    .quick{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+
+    .entries{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+    .entry{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;background:#fff}
+    .entry .name{font-weight:700}
+    .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
+    .badge.out{color:var(--danger);border-color:#fecaca}
+    .badge.in{color:var(--success);border-color:#bbf7d0}
+
+    .daytot{display:flex;gap:10px;color:#334155;font-size:13px;margin-top:6px}
+
+    .mutetext{color:#64748b;font-size:12px}
+
+    .fileio input[type="file"]{display:none}
+    .filelabel{border:1px dashed var(--border);padding:8px 12px;border-radius:10px;cursor:pointer}
+
+    /* グラフ領域 */
+    .chart-container{margin-top:20px;padding:14px; overflow:hidden}
+    .chart-box{ position:relative; width:100%; height:320px; max-height:60vh; overflow:hidden }
+    .chart-box canvas{ position:absolute; inset:0; width:100% !important; height:100% !important; display:block }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="nav">
+        <button id="btnPrevMonth">◀ 前の期間</button>
+        <button id="btnToday" class="ghost">今日の期間</button>
+        <button id="btnNextMonth">次の期間 ▶</button>
+      </div>
+      <div class="month-label" id="monthLabel">給与期間</div>
+      <div class="fileio">
+        <button id="saveBtn" title="JSONとして書き出し">書き出し</button>
+        <label class="filelabel" title="JSONから読み込み">読み込み<input id="loadInput" type="file" accept="application/json" /></label>
+      </div>
+    </div>
+
+    <!-- 給料日設定 -->
+    <div class="card panel" id="salarySetting"></div>
+
+    <!-- カレンダーエリア -->
+    <div class="calendar card" id="calendarArea">
+      <div class="weekdays">
+        <div class="weekday">日</div>
+        <div class="weekday">月</div>
+        <div class="weekday">火</div>
+        <div class="weekday">水</div>
+        <div class="weekday">木</div>
+        <div class="weekday">金</div>
+        <div class="weekday">土</div>
+      </div>
+      <div class="grid" id="calendarGrid"></div>
+      <div class="summary-row">
+        <div class="card sumcard expense">
+          <div class="sumlabel">期間の出費</div>
+          <div class="sumvalue" id="monthExpense">¥0</div>
+        </div>
+        <div class="card sumcard income">
+          <div class="sumlabel">期間の収入</div>
+          <div class="sumvalue" id="monthIncome">¥0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="panel card">
+        <h2 id="selectedTitle">選択日: -</h2>
+
+        <div class="daytot">
+          <div>出費: <strong id="dayExpense">¥0</strong></div>
+          <div>収入: <strong id="dayIncome">¥0</strong></div>
+        </div>
+
+        <div class="mutetext" style="margin-top:4px">名称はボタンからワンタップ入力できます</div>
+        <div class="quick" id="quickNames"></div>
+
+        <div class="form">
+          <label>
+            種類
+            <select id="type">
+              <option value="expense">支出</option>
+              <option value="income">収入</option>
+            </select>
+          </label>
+          <label>
+            金額（円）
+            <input id="amount" type="number" inputmode="numeric" min="0" step="1" placeholder="0" />
+          </label>
+          <label class="full">
+            名称
+            <input id="name" type="text" placeholder="例: 食費 / 家賃 / 給料 など" />
+          </label>
+          <div class="full" style="display:flex;gap:8px">
+            <button id="addBtn" class="primary">追加</button>
+            <button id="clearForm" type="button">クリア</button>
+          </div>
+        </div>
+
+        <div class="entries" id="entriesList"></div>
+      </div>
+
+      <div class="panel card">
+        <h2>メモ & 使い方</h2>
+        <p class="note">
+          ・給料日から次の給料日の前日までを1期間として表示・集計します。<br>
+          ・起動時は、今日が含まれる期間が表示されます。<br>
+          ・日付をクリックすると、その枠が<strong>四角で囲まれ</strong>、下の欄で編集できます。<br>
+          ・名称はボタン（食費/交通/家賃…）で自動入力できます。<br>
+          ・書き出しはJSONファイル、読み込みで継続編集できます。<br>
+          ・各日セルの右下に「-出費 / +収入」の合計が表示されます。
+        </p>
+      </div>
+    </div>
+
+    <!-- グラフ表示 -->
+    <div class="chart-container card">
+      <h2>期間グラフ</h2>
+      <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+      <div class="chart-box" style="margin-top:20px"><canvas id="nameChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // ====== Utility ======
+    const fmtJPY = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
+    const MS_DAY = 24*60*60*1000;
+    const today = new Date();
+
+    const nameInp = document.getElementById('name');
+    const quickNamesWrap = document.getElementById('quickNames');
+
+    function ymdStr(y, m, d){ return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+    function parseYmd(s){ const [y,mm,d]=s.split('-').map(Number); return new Date(y, mm-1, d); }
+
+    // ====== State ======
+    const state = {
+      year: today.getFullYear(),
+      month: today.getMonth(), // anchor month (0-indexed)
+      selected: null, // 'YYYY-MM-DD'
+      ledger: {},
+      salaryDay: 1
+    };
+
+    const DEFAULT_QUICK = [
+      '食費', '交通', '病院', '雑費', '娯楽', 'paypayチャージ', 'famipayチャージ', '銀行引き落とし', '銀行預け'
+    ];
+
+    // ====== IndexedDB + Crypto (固定パスフレーズ) ======
+    const FIXED_PASSPHRASE = 'nanoha=takana';
+    const DB_NAME = 'kakeibo_db_v1';
+    const STORE = 'kv';
+    const IDB_KEY = 'payload';
+
+    function idbOpen(){
+      return new Promise((resolve,reject)=>{
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore(STORE, { keyPath:'key' }); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function idbGet(key){
+      const db = await idbOpen();
+      return new Promise((resolve,reject)=>{
+        const tx = db.transaction(STORE,'readonly');
+        const st = tx.objectStore(STORE);
+        const g = st.get(key);
+        g.onsuccess = () => { const v=g.result?g.result.value:null; db.close(); resolve(v); };
+        g.onerror = () => { const e=g.error; db.close(); reject(e); };
+      });
+    }
+    async function idbPut(key,value){
+      const db = await idbOpen();
+      return new Promise((resolve,reject)=>{
+        const tx = db.transaction(STORE,'readwrite');
+        tx.objectStore(STORE).put({ key, value });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { const e=tx.error; db.close(); reject(e); };
+      });
+    }
+
+    // Web Crypto helpers
+    const ITER = 210000, ENC = 'AES-GCM', HASH='SHA-256', IV_LEN=12, SALT_LEN=16;
+    const te = new TextEncoder(), td = new TextDecoder();
+    function b64e(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+    function b64d(str){ const bin=atob(str); return Uint8Array.from(bin,c=>c.charCodeAt(0)).buffer; }
+    async function deriveKey(pass,salt){
+      const base = await crypto.subtle.importKey('raw', te.encode(pass), 'PBKDF2', false, ['deriveKey']);
+      return crypto.subtle.deriveKey({ name:'PBKDF2', salt, iterations:ITER, hash:HASH }, base, { name:ENC, length:256 }, false, ['encrypt','decrypt']);
+    }
+    async function encryptJSON(obj, pass){
+      const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+      const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
+      const key = await deriveKey(pass, salt);
+      const data = te.encode(JSON.stringify(obj));
+      const ct = await crypto.subtle.encrypt({name:ENC, iv}, key, data);
+      return { ver:1, kdf:'PBKDF2', iter:ITER, hash:HASH, alg:ENC, salt:b64e(salt), iv:b64e(iv), ct:b64e(ct) };
+    }
+    async function decryptJSON(pkg, pass){
+      const salt = new Uint8Array(b64d(pkg.salt));
+      const iv = new Uint8Array(b64d(pkg.iv));
+      const key = await deriveKey(pass, salt);
+      const pt = await crypto.subtle.decrypt({name:ENC, iv}, key, b64d(pkg.ct));
+      return JSON.parse(td.decode(new Uint8Array(pt)));
+    }
+
+    // ====== Save / Load (IndexedDB ONLY) ======
+    let _saveTimer = null;
+    function scheduleSave(){ clearTimeout(_saveTimer); _saveTimer = setTimeout(()=>{ persist(); }, 200); }
+
+    async function persist(){
+      const payload = { version:6, savedAt:new Date().toISOString(), ledger: state.ledger, ui:{ year:state.year, month:state.month, selected:state.selected }, salaryDay: state.salaryDay };
+      try{ const enc = await encryptJSON(payload, FIXED_PASSPHRASE); await idbPut(IDB_KEY, enc); } catch(e){ console.warn('IDB save error', e); }
+    }
+
+    async function load(){
+      try{ const pkg = await idbGet(IDB_KEY); if(!pkg) return; const obj = await decryptJSON(pkg, FIXED_PASSPHRASE);
+        if(obj.ledger) state.ledger = obj.ledger; else if(typeof obj==='object') state.ledger = obj;
+        if(obj.ui){ if(Number.isInteger(obj.ui.year)) state.year=obj.ui.year; if(Number.isInteger(obj.ui.month)) state.month=obj.ui.month; if(typeof obj.ui.selected==='string') state.selected=obj.ui.selected; }
+        if(Number.isInteger(obj.salaryDay)) state.salaryDay = obj.salaryDay;
+      }catch(e){ console.warn('IDB load error', e); }
+    }
+
+    // ====== Salary period helpers ======
+    function getSalaryPeriod(y,m){
+      const sd = Math.min(28, Math.max(1, Number(state.salaryDay)||1));
+      const start = new Date(y, m, sd);
+      const end = (m===11) ? new Date(y+1, 0, sd-1) : new Date(y, m+1, sd-1);
+      return { start, end };
+    }
+    function calcSalaryPeriodTotals(y,m){
+      const {start,end} = getSalaryPeriod(y,m);
+      let exp=0, inc=0;
+      for(const k in state.ledger){
+        const d = parseYmd(k);
+        if(d>=start && d<=end){ const {dayExp,dayInc} = calcDayTotals(k); exp+=dayExp; inc+=dayInc; }
+      }
+      return {exp,inc};
+    }
+
+    // ====== Quick names ======
+    function renderQuickNames(){
+      const wrap = document.getElementById('quickNames');
+      wrap.innerHTML = '';
+      DEFAULT_QUICK.forEach(q => {
+        const btn = document.createElement('button');
+        btn.className = 'chip';
+        btn.type = 'button';
+        btn.textContent = q;
+        btn.addEventListener('click', () => { nameInp.value = q; nameInp.focus(); });
+        wrap.appendChild(btn);
+      });
+    }
+
+    // ====== Calendar (salary period) ======
+    function renderPeriod(){
+      const y = state.year, m = state.month;
+      const {start, end} = getSalaryPeriod(y, m);
+
+      const fmt = (d)=> `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+      document.getElementById('monthLabel').textContent = `給与期間: ${fmt(start)} 〜 ${fmt(end)}`;
+
+      const grid = document.getElementById('calendarGrid');
+      grid.innerHTML = '';
+      const startGrid = new Date(start); startGrid.setDate(startGrid.getDate() - startGrid.getDay());
+      const cells = [];
+      for(let i=0;i<42;i++){
+        const d = new Date(startGrid); d.setDate(startGrid.getDate()+i);
+        const dstr = ymdStr(d.getFullYear(), d.getMonth(), d.getDate());
+        const cell = document.createElement('div'); cell.className='cell';
+        const inside = d>=start && d<=end; if(!inside) cell.classList.add('out');
+        const dateEl = document.createElement('div'); dateEl.className='date'; dateEl.textContent=String(d.getDate()); cell.appendChild(dateEl);
+        const t=new Date(); if(ymdStr(t.getFullYear(),t.getMonth(),t.getDate())===dstr) cell.classList.add('today');
+        if(state.selected===dstr) cell.classList.add('selected');
+        const { dayExp, dayInc } = calcDayTotals(dstr);
+        const totals = document.createElement('div'); totals.className='totals';
+        const neg = document.createElement('div'); neg.className='neg'; neg.textContent = dayExp ? `- ${fmtJPY.format(dayExp)}` : '';
+        const pos = document.createElement('div'); pos.className='pos'; pos.textContent = dayInc ? `+ ${fmtJPY.format(dayInc)}` : '';
+        totals.appendChild(neg); totals.appendChild(pos); cell.appendChild(totals);
+        cell.addEventListener('click', ()=>{
+          if(inside){ state.selected = dstr; }
+          else { state.year = d.getFullYear(); state.month = d.getMonth(); state.selected = dstr; }
+          scheduleSave(); renderAll();
+          document.getElementById('selectedTitle').scrollIntoView({behavior:'smooth', block:'start'});
+        });
+        cells.push(cell);
+      }
+      cells.forEach(c=>grid.appendChild(c));
+
+      const {exp,inc} = calcSalaryPeriodTotals(y,m);
+      document.getElementById('monthExpense').textContent = `- ${fmtJPY.format(exp)}`;
+      document.getElementById('monthIncome').textContent = `+ ${fmtJPY.format(inc)}`;
+      scheduleSave();
+    }
+
+    function ensureSelected(){
+      if(!state.selected){
+        const t = new Date();
+        state.selected = ymdStr(t.getFullYear(), t.getMonth(), t.getDate());
+      }
+    }
+
+    // ====== Totals per day ======
+    function calcDayTotals(dstr){
+      const list = state.ledger[dstr] || [];
+      let dayExp=0, dayInc=0;
+      for(const it of list){ if(it.type==='expense') dayExp += Math.abs(Number(it.amount)||0); else dayInc += Math.abs(Number(it.amount)||0); }
+      return { dayExp, dayInc };
+    }
+
+    // ====== Detail panel ======
+    let editing = null; // { date, id }
+    function renderDetail(){
+      ensureSelected();
+      const d = parseYmd(state.selected);
+      document.getElementById('selectedTitle').textContent = `選択日: ${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+
+      const list = (state.ledger[state.selected] || []).slice().sort((a,b)=>a.ts-b.ts);
+      const { dayExp, dayInc } = calcDayTotals(state.selected);
+      document.getElementById('dayExpense').textContent = `- ${fmtJPY.format(dayExp)}`;
+      document.getElementById('dayIncome').textContent = `+ ${fmtJPY.format(dayInc)}`;
+
+      const entriesList = document.getElementById('entriesList');
+      entriesList.innerHTML = '';
+      if(list.length===0){ const empty = document.createElement('div'); empty.className = 'mutetext'; empty.textContent = 'この日に登録された明細はありません。'; entriesList.appendChild(empty); return; }
+
+      list.forEach(item => {
+        const row = document.createElement('div'); row.className = 'entry';
+        const left = document.createElement('div');
+        const name = document.createElement('div'); name.className='name'; name.textContent = item.name || '(無題)';
+        const sub = document.createElement('div'); sub.className='mutetext'; const dt = new Date(item.ts);
+        sub.textContent = `${dt.getHours().toString().padStart(2,'0')}:${dt.getMinutes().toString().padStart(2,'0')}・${item.type==='expense'?'支出':'収入'}`;
+        left.appendChild(name); left.appendChild(sub);
+        const amt = document.createElement('div'); amt.style.fontWeight='800'; amt.textContent = `${item.type==='expense'?'-':'+'} ${fmtJPY.format(Math.abs(item.amount||0))}`;
+        const actions = document.createElement('div'); actions.style.display='flex'; actions.style.gap='6px';
+        const badge = document.createElement('span'); badge.className = `badge ${item.type==='expense'?'out':'in'}`; badge.textContent = item.type==='expense'?'支出':'収入';
+        const editBtn = document.createElement('button'); editBtn.textContent='編集'; editBtn.className='ghost';
+        const delBtn = document.createElement('button'); delBtn.textContent='削除';
+        actions.appendChild(badge); actions.appendChild(editBtn); actions.appendChild(delBtn);
+        editBtn.addEventListener('click', ()=>{ editing = { date: state.selected, id: item.id }; document.getElementById('type').value = item.type; document.getElementById('amount').value = Math.abs(item.amount||0); document.getElementById('name').value = item.name||''; document.getElementById('addBtn').textContent = '更新'; document.getElementById('addBtn').classList.add('primary'); document.getElementById('name').focus(); });
+        delBtn.addEventListener('click', ()=>{
+          if(confirm('この明細を削除しますか？')){
+            const arr = state.ledger[state.selected] || [];
+            const idx = arr.findIndex(it => it.id===item.id);
+            if(idx>-1){ arr.splice(idx,1); if(arr.length===0) delete state.ledger[state.selected]; scheduleSave(); renderAll(); }
+          }
+        });
+        row.appendChild(left); row.appendChild(amt); row.appendChild(actions); entriesList.appendChild(row);
+      });
+    }
+
+    function clearForm(){ editing=null; document.getElementById('type').value='expense'; document.getElementById('amount').value=''; document.getElementById('name').value=''; document.getElementById('addBtn').textContent='追加'; }
+
+    function addOrUpdate(){
+      ensureSelected();
+      const type = document.getElementById('type').value;
+      const amount = Math.max(0, Math.floor(Number(document.getElementById('amount').value || 0)));
+      const name = (document.getElementById('name').value||'').trim();
+      if(!amount){ alert('金額を入力してください'); document.getElementById('amount').focus(); return; }
+
+      const arr = state.ledger[state.selected] || (state.ledger[state.selected] = []);
+      if(editing){ const idx = arr.findIndex(it => it.id===editing.id); if(idx>-1){ arr[idx] = { ...arr[idx], type, amount, name } } editing=null; document.getElementById('addBtn').textContent='追加'; }
+      else { arr.push({ id: crypto.randomUUID?.() || String(Date.now()+Math.random()), type, amount, name, ts: Date.now() }); }
+      scheduleSave(); clearForm(); renderAll();
+    }
+
+    // ====== Export / Import (ファイル) ======
+    function downloadFile(){
+      const payload = { version:6, exportedAt: new Date().toISOString(), ledger: state.ledger, ui:{year:state.year, month:state.month, selected:state.selected}, salaryDay: state.salaryDay };
+      const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `kakeibo_salary_${Date.now()}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+    }
+    function loadFromFile(file){
+      const reader = new FileReader(); reader.onload = (e)=>{
+        try{ const obj = JSON.parse(String(e.target.result||'{}')); if(!obj.ledger || typeof obj.ledger !== 'object') throw new Error('Invalid file'); state.ledger = obj.ledger; if(obj.ui){ state.year=obj.ui.year??state.year; state.month=obj.ui.month??state.month; state.selected=obj.ui.selected??state.selected; } if(Number.isInteger(obj.salaryDay)) state.salaryDay = obj.salaryDay; scheduleSave(); renderAll(); alert('読み込みが完了しました'); }catch(err){ alert('読み込みに失敗しました: '+ err.message); }
+      }; reader.readAsText(file);
+    }
+
+    // ====== Charts (salary period) ======
+    let dailyChart, nameChart;
+    function renderCharts(){
+      const {start, end} = getSalaryPeriod(state.year, state.month);
+      const days = Math.floor((end - start)/MS_DAY) + 1;
+      const labels = Array.from({length: days}, (_,i)=>{ const d=new Date(start); d.setDate(start.getDate()+i); return `${d.getMonth()+1}/${d.getDate()}`; });
+
+      function getPeriodSeries(type){
+        const arr = new Array(days).fill(0);
+        for(const k in state.ledger){ const d=parseYmd(k); if(d>=start && d<=end){ const idx=Math.floor((d-start)/MS_DAY); const list=state.ledger[k]||[]; for(const it of list){ if(it.type===type){ arr[idx]+=Math.abs(Number(it.amount)||0); } } } }
+        return arr;
+      }
+      function getNameBreakdown(type){
+        const map=new Map();
+        for(const k in state.ledger){
+          const d=parseYmd(k);
+          if(d>=start && d<=end){
+            const list=state.ledger[k]||[];
+            for(const it of list){
+              if(it.type===type){
+                const key=(it.name||'無題').trim()||'無題';
+                const val = Math.abs(Number(it.amount) || 0);
+                map.set(key, (map.get(key) || 0) + val);
+              }
+            }
+          }
+        }
+        const pairs=[...map.entries()].sort((a,b)=>b[1]-a[1]);
+        const top=pairs.slice(0,8);
+        const other=pairs.slice(8).reduce((s,[_k,v])=>s+v,0);
+        if(other>0) top.push(['その他',other]);
+        return top;
+      }
+
+      const exp = getPeriodSeries('expense');
+      const inc = getPeriodSeries('income');
+
+      if(dailyChart){ dailyChart.destroy(); }
+      dailyChart = new Chart(document.getElementById('dailyChart').getContext('2d'), {
+        type: 'bar', data: { labels, datasets: [ { label: '支出', data: exp, backgroundColor: '#f43f5e' }, { label: '収入', data: inc, backgroundColor: '#10b981' } ] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'top'}, title:{display:true, text:`${start.getMonth()+1}/${start.getDate()}〜${end.getMonth()+1}/${end.getDate()} 日別合計`} }, scales:{ x:{stacked:true}, y:{stacked:true, ticks:{ callback:v=> v.toLocaleString('ja-JP') } } } }
+      });
+
+      const pairs = getNameBreakdown('expense');
+      const nLabels = pairs.map(p=>p[0]); const nVals = pairs.map(p=>p[1]);
+      const legendPos = document.getElementById('nameChart').clientWidth < 560 ? 'bottom' : 'right';
+      const palette = ['#60a5fa','#34d399','#f97316','#f43f5e','#a78bfa','#f59e0b','#22c55e','#38bdf8','#e879f9'];
+      if(nameChart){ nameChart.destroy(); }
+      nameChart = new Chart(document.getElementById('nameChart').getContext('2d'), {
+        type: 'doughnut', data: { labels: nLabels, datasets: [{ data: nVals, backgroundColor: nLabels.map((_,i)=>palette[i%palette.length]) }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:legendPos}, title:{display:true, text:`${start.getMonth()+1}/${start.getDate()}〜${end.getMonth()+1}/${end.getDate()} 名称別（支出）`} } }
+      });
+    }
+
+    // ====== Salary day setting UI ======
+    function renderSalaryDaySetting(){
+      const wrap = document.getElementById('salarySetting'); if(!wrap) return; wrap.innerHTML='';
+      const h = document.createElement('h2'); h.textContent='給料日設定';
+      const line = document.createElement('div'); line.style.display='flex'; line.style.gap='8px'; line.style.alignItems='center';
+      const label = document.createElement('label'); label.textContent='給料日 (1〜28)：';
+      const input = document.createElement('input'); input.type='number'; input.min=1; input.max=28; input.value=state.salaryDay||1;
+      input.addEventListener('change', ()=>{ state.salaryDay=Math.min(28, Math.max(1, parseInt(input.value)||1)); scheduleSave(); renderAll(); });
+      line.appendChild(label); line.appendChild(input);
+      const note = document.createElement('div'); note.className='mutetext'; note.textContent='※ 給料日から次の給料日の前日までを1期間として表示・集計します。';
+      wrap.appendChild(h); wrap.appendChild(line); wrap.appendChild(note);
+    }
+
+    // ====== Wiring ======
+    document.getElementById('btnPrevMonth').addEventListener('click', ()=>{ const {start}=getSalaryPeriod(state.year,state.month); const prev=new Date(start); prev.setDate(prev.getDate()-1); state.year=prev.getFullYear(); state.month=prev.getMonth(); state.selected=ymdStr(prev.getFullYear(),prev.getMonth(),prev.getDate()); scheduleSave(); renderAll(); });
+    document.getElementById('btnNextMonth').addEventListener('click', ()=>{ const {end}=getSalaryPeriod(state.year,state.month); const nxt=new Date(end); nxt.setDate(nxt.getDate()+1); state.year=nxt.getFullYear(); state.month=nxt.getMonth(); state.selected=ymdStr(nxt.getFullYear(),nxt.getMonth(),nxt.getDate()); scheduleSave(); renderAll(); });
+    document.getElementById('btnToday').addEventListener('click', ()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth(); state.selected=ymdStr(t.getFullYear(),t.getMonth(),t.getDate()); scheduleSave(); renderAll(); });
+
+    document.getElementById('addBtn').addEventListener('click', (e)=>{ e.preventDefault(); addOrUpdate(); });
+    document.getElementById('clearForm').addEventListener('click', (e)=>{ e.preventDefault(); clearForm(); });
+
+    document.getElementById('saveBtn').addEventListener('click', downloadFile);
+    document.getElementById('loadInput').addEventListener('change', (e)=>{ const f=e.target.files?.[0]; if(f) loadFromFile(f); e.target.value=''; });
+
+    // ====== Init ======
+    function renderAll(){ renderSalaryDaySetting(); ensureSelected(); renderPeriod(); renderDetail(); renderCharts(); }
+
+    async function init(){
+      await load();
+      renderQuickNames();
+      renderAll();
+    }
+    init();
+  </script>
+</body>
+</html>
