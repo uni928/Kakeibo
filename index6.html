@@ -342,7 +342,7 @@
         btn.className = 'chip';
         btn.type = 'button';
         btn.textContent = q;
-        btn.addEventListener('click', () => { nameInp.value = q; nameInp.focus(); });
+        btn.addEventListener('click', () => { nameInp.value = q; nameInp.blur(); });
         wrap.appendChild(btn);
       });
     }
@@ -639,12 +639,8 @@
         targetInput.dispatchEvent(new Event('input',  { bubbles: true }));
         targetInput.dispatchEvent(new Event('change', { bubbles: true }));
 
-        // ユーザー操作感向上
-        targetInput.focus();
-        // 可能なら選択状態に
-        if (typeof targetInput.select === 'function') {
-          try { targetInput.select(); } catch (_) {}
-        }
+  // フォーカスを外す
+  targetInput.blur();
       });
 
       container.appendChild(btn);
