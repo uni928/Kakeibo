@@ -75,6 +75,33 @@
     .fileio input[type="file"]{display:none}
     .filelabel{border:1px dashed var(--border);padding:8px 12px;border-radius:10px;cursor:pointer}
 
+.quick-amount {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quick-amount button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb; /* #ddd 相当 */
+  background: #f9fafb;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quick-amount button:hover {
+  background: #f3f4f6;
+}
+
+.quick-amount button:focus {
+  outline: 2px solid #4f46e5; /* アクセシビリティ用フォーカス */
+  outline-offset: 1px;
+}
+
+
     /* グラフ領域 */
     .chart-container{margin-top:20px;padding:14px; overflow:hidden}
     .chart-box{ position:relative; width:100%; height:320px; max-height:60vh; overflow:hidden }
@@ -156,6 +183,10 @@
             <button id="clearForm" type="button">クリア</button>
           </div>
         </div>
+
+<!-- 金額入力の直後あたりに置くと自然です -->
+<div id="amountQuickBtns" class="quick-amount" aria-label="金額クイック選択"></div>
+
 
         <div class="entries" id="entriesList"></div>
       </div>
@@ -311,7 +342,7 @@
         btn.className = 'chip';
         btn.type = 'button';
         btn.textContent = q;
-        btn.addEventListener('click', () => { nameInp.value = q; nameInp.focus(); });
+        btn.addEventListener('click', () => { nameInp.value = q; nameInp.blur(); });
         wrap.appendChild(btn);
       });
     }
@@ -557,9 +588,82 @@
       renderAll();
     }
     init();
+
+(() => {
+  // 金額入力を見つける（id="amount" 優先。なければ name/placeholder に「amount」や「金額」を含む input を探索）
+  function findAmountInput() {
+    const byId = document.querySelector('#amount');
+    if (byId && (byId.type === 'number' || byId.inputMode === 'numeric' || byId.type === 'text')) return byId;
+
+    const candidates = document.querySelectorAll(
+      'input[type="number"], input[type="text"], input[inputmode="numeric"]'
+    );
+    for (const el of candidates) {
+      const name = (el.getAttribute('name') || '').toLowerCase();
+      const ph   = (el.getAttribute('placeholder') || '').toLowerCase();
+      if (name.includes('amount') || ph.includes('amount') || name.includes('金額') || ph.includes('金額')) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function createQuickButtons(targetInput) {
+    // 既存のコンテナがあれば再利用。なければ金額入力の直後に生成。
+    let container = document.getElementById('amountQuickBtns');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'amountQuickBtns';
+      container.className = 'quick-amount';
+      container.setAttribute('aria-label', '金額クイック選択');
+      targetInput.insertAdjacentElement('afterend', container);
+    } else if (!container.parentNode) {
+      // 万一DOMから外れていたら差し戻す
+      targetInput.insertAdjacentElement('afterend', container);
+    }
+
+    // 二重生成を防ぐためクリア
+    container.innerHTML = '';
+
+    // 1000〜20000を1000刻みでボタン生成
+    for (let v = 1000; v <= 20000; v += 1000) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '¥' + v.toLocaleString();
+
+      btn.addEventListener('click', () => {
+        // 値を "設定"（加算でなく上書き）。必要に応じてここを加算に変えることも可能です。
+        targetInput.value = String(v);
+
+        // React/Vueなどの双方向バインド向けにイベントを発火
+        targetInput.dispatchEvent(new Event('input',  { bubbles: true }));
+        targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+  // フォーカスを外す
+  targetInput.blur();
+      });
+
+      container.appendChild(btn);
+    }
+  }
+
+  // 初期化
+  const amountInput = findAmountInput();
+  if (amountInput) {
+    createQuickButtons(amountInput);
+  } else {
+    // 金額入力がまだ描画されていないSPA対策として、少し待ってからもう一度探す
+    const observer = new MutationObserver(() => {
+      const lateInput = findAmountInput();
+      if (lateInput) {
+        createQuickButtons(lateInput);
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+})();
+
   </script>
 </body>
 </html>
-
-
-
