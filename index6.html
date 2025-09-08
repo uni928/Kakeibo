@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -662,6 +663,16 @@
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
+})();
+
+// === 起動時は常に「今日」から開始する（保存済みの選択日は無視） ===
+(function forceStartFromToday(){
+  const t = new Date();
+  state.year = t.getFullYear();
+  state.month = t.getMonth();
+  state.selected = ymdStr(t.getFullYear(), t.getMonth(), t.getDate());
+  renderAll();       // 画面を今日で再描画
+  scheduleSave();    // UI状態を保存（IDB）
 })();
 
   </script>
