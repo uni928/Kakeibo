@@ -585,6 +585,27 @@
 
     async function init(){
       await load();
+      // 起動日に統一（今日が含まれる給与期間にアンカーし、選択日は今日）
+{
+  const t = new Date();
+  let y = t.getFullYear();
+  let m = t.getMonth();
+
+  // いまの (y,m) に対する給与期間を計算
+  let { start, end } = getSalaryPeriod(y, m);
+
+  // 今日が期間外なら、今日を含むようにアンカー月を前後にずらす
+  if (t < start) {
+    m--; if (m < 0) { m = 11; y--; }
+  } else if (t > end) {
+    m++; if (m > 11) { m = 0; y++; }
+  }
+
+  state.year = y;
+  state.month = m;
+  state.selected = ymdStr(t.getFullYear(), t.getMonth(), t.getDate());
+}
+
       renderQuickNames();
       renderAll();
     }
